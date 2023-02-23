@@ -22,14 +22,15 @@ summary(data_clinical_patient)
 ```
 ```{r}
 data_clinical_patient1 = data_clinical_patient %>% drop_na(OS_STATUS)
-data_clinical_patient1 = data_clinical_patient %>% drop_na(SUBTYPE)
+data_clinical_patient1 = data_clinical_patient1 %>% drop_na(SUBTYPE)
+data_clinical_patient1 <- data_clinical_patient1[!(data_clinical_patient1$SUBTYPE==""),]
 data_clinical_patient1$SUBTYPE = factor(data_clinical_patient1$SUBTYPE)
 
-barchart = ggplot(data_clinical_patient1,
+barchart = ggplot(data_clinical_patient1, 
                      aes(x=SUBTYPE, fill = OS_STATUS)) +
   geom_bar(position = "dodge") +
-  labs(title = 'ALP in Different Cirrhosis Stages Splitted by Spiders Condition',
-       x = 'Cirrhosis Stages')
+  labs(title = 'Overal Survival (OS) in Different Breast Cancer Subtypes',
+       x = 'Breast Cancer Subtypes')
 barchart
 ```
 
