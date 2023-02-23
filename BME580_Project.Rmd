@@ -30,9 +30,10 @@ data_gene_panel_matrix[0:10,]
 summary(data_gene_panel_matrix)
 ```
 ```{r cars}
-data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
-data_clinical_patient[0:10,]
-summary(data_clinical_patient)
+# takes forever to load
+data_methylation_hm27_hm450_merged = read.csv('../dataset/data_methylation_hm27_hm450_merged.txt', sep='\t', header = TRUE)
+data_methylation_hm27_hm450_merged[0:10,]
+summary(data_methylation_hm27_hm450_merged)
 ```
 ```{r cars}
 data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
