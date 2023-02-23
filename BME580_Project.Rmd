@@ -1,0 +1,125 @@
+---
+title: "BME580_Project"
+output: html_document
+date: "2023-02-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_sample = read.csv('../dataset/data_clinical_sample.txt', sep='\t', header = TRUE)
+data_clinical_sample[0:10,]
+summary(data_clinical_sample)
+```
+```{r cars}
+data_clinical_supp_hypoxia = read.csv('../dataset/data_clinical_supp_hypoxia.txt', sep='\t', header = TRUE)
+data_clinical_supp_hypoxia[0:10,]
+summary(data_clinical_supp_hypoxia)
+```
+```{r cars}
+data_gene_panel_matrix = read.csv('../dataset/data_gene_panel_matrix.txt', sep='\t', header = TRUE)
+data_gene_panel_matrix[0:10,]
+summary(data_gene_panel_matrix)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+```{r cars}
+data_clinical_patient = read.csv('../dataset/data_clinical_patient.txt', sep='\t', header = TRUE)
+data_clinical_patient[0:10,]
+summary(data_clinical_patient)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
