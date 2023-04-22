@@ -1,0 +1,82 @@
+---
+title: "BME580_Project"
+output: html_document
+date: "2023-04-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(corrplot)
+library(patchwork)
+library(factoextra)
+library(tidyverse)
+library(caret)
+```
+
+```{r}
+data_address = '../dataset/data_clinical_patient.txt'
+data_clinical_patient = read.csv(data_address, sep='\t', header = TRUE)
+# data_clinical_patient[0:10,]
+# summary(data_clinical_patient)
+```
+```{r}
+mrna_address = '../dataset/data_mrna_seq_v2_rsem_zscores_ref_all_samples.txt'
+data_mrna_zscores = read.csv(mrna_address, sep=',', header = TRUE)
+# data_mrna_zscores[0:10,]
+# summary(data_mrna_zscores)
+```
+
+```{r}
+# Merging the mRNA zscores with the clinical data
+colnames(data_mrna_zscores)[1] = "PATIENT_ID"
+
+df_merge <- merge(data_clinical_patient,data_mrna_zscores,by="PATIENT_ID")
+write.csv(df_merge, "mereged_data.csv", row.names=FALSE)
+```
+
+```{r}
+# Reading the whole dataset
+mergerd_dataset = read.csv('mereged_data.csv', sep=',', header = TRUE)
+# mergerd_dataset[0:10,]
+```
+
+```{r}
+scaled_data = mergerd_dataset[37:ncol(mergerd_dataset)] %>% 
+  mutate_if(is.numeric, scale) %>% 
+  bind_cols("DFS_STATUS" = mergerd_dataset$DFS_STATUS) %>% 
+  bind_cols("SUBTYPE" = mergerd_dataset$SUBTYPE) %>%  
+  bind_cols("DSS_STATUS" = mergerd_dataset$DSS_STATUS)
+```
+
+
+```{r}
+shuffled_data= scaled_data[sample(1:nrow(scaled_data)), ]
+train_ind_70 <- createDataPartition(shuffled_data$DSS_STATUS, 
+                                 times=1, p=.7, list=FALSE)
+train_df_70 <- shuffled_data[train_ind_70 , ]
+test_df_70  <- shuffled_data[-train_ind_70, ]
+```
+
+
+```{r}
+write.csv(train_df_70, "train_df_70.csv", row.names=FALSE)
+write.csv(test_df_70, "test_df_70.csv", row.names=FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,822 @@
+---
+title: "BME580_Project"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-04-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(psych)
+library(tidyverse) 
+library(gridExtra)
+library(corrplot)
+library(patchwork)
+library(factoextra)
+library(tidyverse)
+library(corrplot)
+library(caret)
+library(e1071)
+library(randomForest)
+library(smotefamily)
+library(colorspace)
+library(dplyr)
+library(caret)
+library(factoextra)
+library(stats)
+library(ggdendro)
+library(dendextend)
+library(caTools)
+library(MASS)
+```
+
+```{r}
+# loading the test and train datasets that were shuffled and split in the 
+# previous R script
+test_70original <- read.csv("test_df_70.csv")
+train_70original <- read.csv("train_df_70.csv")
+
+sprintf("train dataset is %s by %s", nrow(train_70original), ncol(train_70original))
+sprintf("test dataset is %s by %s", nrow(test_70original), ncol(test_70original))
+```
+
+```{r drop high missingness and impute}
+# drop columns with more than 15% NA's (in train) and impute median for columns 
+# with less than 15% NAs
+
+t70_dropped <- train_70original %>% dplyr::select(where(~mean(is.na(.)) < 0.15))
+dropped_col_indices_70 <- which(!names(train_70original) %in% names(t70_dropped))
+test_70 <- test_70original[, -dropped_col_indices_70]
+
+# median imputation!
+for (dataset in list(t70_dropped, test_70)){
+  for (col_name in colnames(dataset)){
+    if (is.numeric(dataset[[col_name]])){
+      dataset[[col_name]][is.na(dataset[[col_name]])] <- median(dataset[[col_name]], na.rm=TRUE) 
+    }
+  }
+}
+```
+
+```{r feature reduction}
+
+# Clean the data by using caret nearZeroVar to drop any mRNA columns that have 
+# near zero variance! (note that the mRNA data starts in the 38th row of the dataset)
+train_70_nzv_cols <- nearZeroVar((t70_dropped[, -c(1:36)]))
+train_70_nzv <- t70_dropped[,-train_70_nzv_cols]
+
+# apply same findings to the test datasets! 
+test_70 <- test_70[,-train_70_nzv_cols]
+
+dim(train_70_nzv)
+```
+
+```{r parametric feature selection - Wilcoxon Test}
+# establishing outcome as a 0 or 1 factor so then we can perform a wilcoxon test 
+# on each column, comparing values in the group 0 outcome to values in the group1 
+# outcome. If there is no significant variance, then the column should be dropped
+
+train_70_nzv <- train_70_nzv %>% filter(DSS_STATUS != "") # if the outcome is 
+# missing, no use in the patient data
+train_70_nzv$outcome <- factor(train_70_nzv$DSS_STATUS)
+train_70_nzv$outcome <- ifelse(train_70_nzv$outcome == "0:ALIVE OR DEAD TUMOR FREE", 0, 1)
+
+test_70$outcome <- factor(test_70$DSS_STATUS)
+test_70$outcome <- ifelse(test_70$outcome == "0:ALIVE OR DEAD TUMOR FREE", 0, 1)
+
+gene_importance <- data.frame(data.frame("Transcript ID" = character(),
+                              "P-val" = numeric(), stringsAsFactors = FALSE))
+
+dropped_col_indices_70 <- c()
+# head(train_70_nzv[, 37:ncol(train_70_nzv)])
+for (i in 37:ncol(train_70_nzv)) {
+  index <- i
+  # skip the outcome column
+  if (is.numeric(train_70_nzv[, i])){
+    # perform Wilcoxon test
+    col_data <- train_70_nzv[, index]
+    alive <- train_70_nzv[train_70_nzv$outcome == 0, i]
+    dead <- train_70_nzv[train_70_nzv$outcome == 1, i]
+    wilcox_result <- wilcox.test(alive, dead)
+    # drop column if p-value is not significant
+    if (!is.nan(wilcox_result$p.value)){
+      if (wilcox_result$p.value > 0.05) {
+        dropped_col_indices_70 <- c(dropped_col_indices_70, index)
+      } else {
+        row <- c(colnames(train_70_nzv)[i], wilcox_result$p.value)
+        gene_importance <- rbind(gene_importance, row)
+      }
+    }
+  }
+}
+test_70 <- test_70[,-dropped_col_indices_70]
+train_70_nzv_filtered <- train_70_nzv[, -dropped_col_indices_70]
+# head(train_70_nzv_filtered)
+```
+
+```{r}
+colnames(gene_importance) <- c("gene_ID", "P.val")
+#write.csv(gene_importance, file = "~/Desktop/new_quantified_variance_genes_2.csv", row.names = FALSE)
+#write.csv(train_70_nzv_filtered, file = "~/Desktop/train_70.csv", row.names = FALSE)
+#write.csv(test_70, file = "~/Desktop/test_70.csv", row.names = FALSE)
+
+train_df <- train_70_nzv_filtered
+test_df <- test_70
+quantified_variance_genes <- gene_importance
+# head(train_df)
+# head(test_df)
+# head(quantified_variance_genes)
+```
+
+```{r EDA}
+# scatterplot for the two most significant genes, colored by mortality
+most_critical_genes <- gene_importance[order(gene_importance$`P.val`), ][c(1,2), ]
+sub_matrix <- train_70_nzv_filtered[, c("DSS_STATUS", most_critical_genes$gene_ID[1], most_critical_genes$gene_ID[2])]
+# head(sub_matrix)
+sub_matrix <- sub_matrix[!rowSums(is.na(sub_matrix)),] #drop NAs 
+ggplot(sub_matrix, aes(x=!!sym(most_critical_genes$gene_ID[1]), y=!!sym(most_critical_genes$gene_ID[2]), colour = DSS_STATUS)) + geom_point(position = position_dodge(width = .3))
+
+```
+
+```{r Simple EDA - Bar Charts & Histograms}
+# Histogram of mortality vs alive patients in dataset
+ggplot(train_70_nzv_filtered, aes(x=DSS_STATUS, fill=DSS_STATUS)) + geom_bar() + 
+  scale_x_discrete(guide = guide_axis(angle = 60))
+
+# Show distribution of gender, age
+ggplot(train_70_nzv, aes(x=DSS_STATUS, y=AGE, fill=DSS_STATUS)) + geom_violin() +
+  scale_x_discrete(guide = guide_axis(angle = 60))
+
+# stacked bar plot showing mortality by cancer stage 
+ggplot(train_70_nzv, aes(x=AJCC_PATHOLOGIC_TUMOR_STAGE, fill=DSS_STATUS)) + geom_bar() + scale_x_discrete(guide = guide_axis(angle = 60))
+```
+
+
+```{r EDA - Clustering Setup}
+mRNA_data <- train_70_nzv_filtered
+mRNA_data <- mRNA_data %>% filter(SUBTYPE != "")
+mRNA_data_numerics <- mRNA_data[, -c(1:28)]
+
+distance_matrix <- dist(mRNA_data_numerics, method = "euclidean")
+hclust_results <- hclust(distance_matrix, method = "ward.D2")
+
+# Create dendrogram object
+BRCA_dendro <- as.dendrogram(hclust_results)
+```
+
+
+```{r EDA - Heirarchical Clustering by Clinical Subtype}
+mRNA_data$SUBTYPE <- as.factor(mRNA_data$SUBTYPE)
+subtype <- mRNA_data$SUBTYPE
+cols <- rainbow_hcl(length(unique(subtype))) #select a number of colors based on subtype size
+col_subtype <- cols[subtype] #make color palette assigning the selected colors to the groups
+col_subtype <- col_subtype[order.dendrogram(BRCA_dendro)] 
+
+dend <- BRCA_dendro %>% 
+set("leaves_pch", 7)  %>%
+set("leaves_cex", 2) %>%
+set("leaves_col", col_subtype) %>%
+set("labels", c()) %>%
+plot(main = "Dendrogram Colored by Subtype")
+legend("topright", legend = levels(subtype), fill = cols, cex = 0.7)
+```  
+
+
+Now, the same thing but labeling by mortality!
+```{r EDA - Heirarchical Clustering by Mortality}
+mRNA_data$outcome <- as.factor(mRNA_data$outcome)
+outcomes <- mRNA_data$outcome
+cols <- rainbow_hcl(length(unique(outcomes))) #select a number of colors based on subtype size
+col_outcome <- cols[outcomes] #make color palette assigning the selected colors to the groups
+col_outcome <- col_outcome[order.dendrogram(BRCA_dendro)] 
+dend <- BRCA_dendro %>% 
+set("leaves_pch", 7)  %>%
+set("leaves_cex", 2) %>%
+set("leaves_col", col_outcome) %>%
+set("labels", c()) %>%
+plot(main = "Dendrogram Colored by Mortality Outcome")
+legend("topright", legend = levels(outcomes), fill = cols, cex = 0.7)
+``` 
+
+
+
+```{r}
+# Let's look at the first 40 columns of the data...
+colnames(train_df)[1:40]
+
+# column 29+ are the mRNA data
+```
+
+```{r}
+train_data = train_df[,29:2311] # only the numerical mRNA features + the output as the last variable
+test_data = test_df[,29:2310] # only the numerical mRNA features
+test_outcome = test_df[,2311]
+```
+
+```{r}
+# A basic function to print the confusion matrix and its respective metrics
+print_metrics <- function(Actual_Values, Predicted_Values) {
+  # Confusion Matrix
+  cm <- table(Predicted_Values, Actual_Values)
+  print(cm)
+  # Calculate accuracy
+  accuracy <- sum(diag(cm)) / sum(cm)*100
+  cat("Accuracy: ",  round(accuracy, 1), "%\n")
+  
+  # Calculate precision
+  precision <- cm[4] / (cm[2] + cm[4])*100
+  cat("Precision: ",  round(precision, 1), "%\n")
+  
+  # Calculate sensitivity
+  recall <- cm[4] / (cm[3] + cm[4])*100
+  cat("Sensitivity: ",  round(recall, 1), "%\n")
+  
+  # Calculate specificity
+  specificity <- cm[1] / (cm[2] + cm[1])*100
+  cat("Specificity: ",  round(specificity, 1), "%\n")
+  return(cm)
+}
+```
+
+```{r}
+# Cross Validation Function for SVM
+svm_cross_validation <- function(input_data, C, K) {
+  folds <- createFolds(input_data$outcome, k = K)
+
+  outcomecol = ncol(input_data)
+  mean_accuracy = list()
+  mean_precision = list()
+  mean_sensitivity = list()
+  mean_specificity = list()
+  
+  for (c in C) {
+    cat('c is', c)
+    acc = list()
+    prec = list()
+    sens = list()
+    spec = list()
+    for (k in 1:length(folds)) {
+      train_train <- input_data[-folds[[k]], ] 
+      validation <- input_data[folds[[k]], -outcomecol]
+      validation_outcome = input_data[folds[[k]], outcomecol]
+      
+      cv_svm_model <- svm(outcome ~ ., data = train_train, kernel = "linear", 
+                     type = 'C-classification', cost = c, class.weights="inverse")
+      cv_svm_pred <- predict(cv_svm_model, validation)
+      cv_svm_cm <- table(validation_outcome[1:length(cv_svm_pred)], cv_svm_pred)
+      accuracy <- sum(diag(cv_svm_cm)) / sum(cv_svm_cm)
+      precision <- cv_svm_cm[4] / (cv_svm_cm[3] + cv_svm_cm[4])
+      sensitivity <- cv_svm_cm[4] / (cv_svm_cm[2] + cv_svm_cm[4])
+      specificity <- cv_svm_cm[1] / (cv_svm_cm[3] + cv_svm_cm[1])
+      acc <- c(acc, accuracy)
+      prec <- c(prec, precision)
+      sens <- c(sens, sensitivity)
+      spec <- c(spec, specificity)
+    }
+    mean_accuracy <- c(mean_accuracy, mean(unlist(acc)))
+    mean_precision <- c(mean_precision, mean(unlist(prec)))
+    mean_sensitivity <- c(mean_sensitivity, mean(unlist(sens)))
+    mean_specificity <- c(mean_specificity, mean(unlist(spec)))
+  }
+  # plotting the SVM cross validation results
+  print(mean_sensitivity)
+  plot(log10(unlist(C)), mean_accuracy, type = "b", frame = FALSE, pch = 19, 
+       col = "red", xlab = "Log(C)", ylab = "", ylim = c(0, 1), xlim = c(-3, 2))
+  lines(log10(unlist(C)), mean_sensitivity, type = "b", frame = FALSE, pch = 19, 
+       col = "blue") 
+  lines(log10(unlist(C)), mean_specificity, type = "b", frame = FALSE, pch = 19, 
+       col = "green")
+  legend("bottomleft", legend = c("Accuracy", "Sensitivity", "Specificity"), 
+         col = c("red", "blue", "green"), lty = 1)
+}
+
+```
+
+
+
+```{r}
+# Cross Validation for SVM on the train dataset with 2516 features
+
+C = list(0.001, 0.01, 0.1, 1, 10)
+svm_cross_validation(train_data, C, 5)
+```
+
+```{r}
+# Running SVM with optimal cost value
+svm_model <- svm(outcome ~ ., data = train_data, kernel = "linear",
+                 type = 'C-classification', cost = 0.01)
+
+svm_pred <- predict(svm_model, test_data)
+svm_cm = print_metrics(test_outcome, svm_pred)
+
+```
+
+```{r}
+rf_model <- randomForest(outcome ~ ., data = train_data, na.action=na.roughfix)
+rf_pred <- predict(rf_model, test_data)
+rf_pred_binary <- ifelse(rf_pred >= 0.5, 1, 0)
+rf_pred_factor <- factor(rf_pred_binary, levels = c(0, 1))
+rf_cm = print_metrics(test_outcome, rf_pred_factor)
+```
+
+```{r}
+# Feature selection based on Wilcoxon Test p-values
+
+# There are 444 features with p-values smaller that 0.005 
+significant_features <- quantified_variance_genes %>% filter(P.val< 0.005) 
+significant_features <- data.frame(significant_features[-c(17, 303),1])
+colnames(significant_features) <- c("gene")
+
+train_data_filtered <- train_df %>% dplyr::select(significant_features$gene)
+test_data_filtered <- test_df %>% dplyr::select(significant_features$gene)
+train_data_filtered$outcome = train_df$outcome
+```
+
+```{r}
+# Running SVM with filtered features
+svm_model <- svm(outcome ~ ., data = train_data_filtered, kernel = "linear",
+                 type = 'C-classification', cost = 0.01)
+
+svm_pred <- predict(svm_model, test_data_filtered)
+svm_cm = print_metrics(test_outcome, svm_pred)
+
+```
+
+```{r}
+# Upsampling the minority (+) claass
+outcomecol = ncol(train_data_filtered)
+upsample_data <- SMOTE(train_data_filtered[,-outcomecol], 
+                       train_data_filtered[,outcomecol], 
+                       K = 7, 
+                       dup_size=3)
+upsampled_train = upsample_data$data
+colnames(upsampled_train)[outcomecol] <- "outcome"
+
+print("The data before upsampling:")
+table(train_data_filtered$outcome)
+
+print("The data after upsampling:")
+table(upsampled_train$outcome)
+```
+
+
+```{r}
+# Cross Validation to find the best C (cost) for SVM
+C = list(0.001, 0.01, 0.1, 1, 10, 100)
+svm_cross_validation(upsampled_train, C, 5)
+```
+```{r}
+# using the best C (100), for the training on the whole train dataset and testing
+# on the test data:
+optimal_svm_model <- svm(outcome ~ ., data = upsampled_train, kernel = "linear", 
+                   type = 'C-classification', cost = 1, class.weights="inverse")
+optimal_svm_pred <- predict(optimal_svm_model, test_data_filtered)
+optimal_svm_cm <- print_metrics(test_outcome, optimal_svm_pred)
+
+# the results show that while the cross validation sensiticity and accuracy were
+# really good, the optimal SVM did not perform well on the test dataset.
+```
+
+```{r}
+# running the CV on the whole train dataset, and validating on test dataset
+folds <- createFolds(upsampled_train$outcome, k = 5)
+
+outcomecol = ncol(upsampled_train)
+mean_accuracy = list()
+mean_precision = list()
+mean_sensitivity = list()
+mean_specificity = list()
+
+C = list(0.001, 0.01, 0.05, 0.1, 1, 10)
+
+for (c in C) {
+  cat('c is', c)
+  acc = list()
+  prec = list()
+  sens = list()
+  spec = list()
+  for (k in 1:length(folds)) {
+    cv_svm_model <- svm(outcome ~ ., data = upsampled_train, kernel = "linear", 
+                   type = 'C-classification', cost = c, class.weights="inverse")
+    cv_svm_pred <- predict(cv_svm_model, test_data_filtered)
+    cv_svm_cm <- table(test_outcome[1:length(cv_svm_pred)], cv_svm_pred)
+    accuracy <- sum(diag(cv_svm_cm)) / sum(cv_svm_cm)
+    precision <- cv_svm_cm[4] / (cv_svm_cm[3] + cv_svm_cm[4])
+    sensitivity <- cv_svm_cm[4] / (cv_svm_cm[2] + cv_svm_cm[4])
+    specificity <- cv_svm_cm[1] / (cv_svm_cm[3] + cv_svm_cm[1])
+    acc <- c(acc, accuracy)
+    prec <- c(prec, precision)
+    sens <- c(sens, sensitivity)
+    spec <- c(spec, specificity)
+  }
+  mean_accuracy <- c(mean_accuracy, mean(unlist(acc)))
+  mean_precision <- c(mean_precision, mean(unlist(prec)))
+  mean_sensitivity <- c(mean_sensitivity, mean(unlist(sens)))
+  mean_specificity <- c(mean_specificity, mean(unlist(spec)))
+}
+# plotting the SVM cross validation results
+print(mean_sensitivity)
+plot(log10(unlist(C)), mean_accuracy, type = "b", frame = FALSE, pch = 19, 
+     col = "red", xlab = "Log(C)", ylab="", ylim = c(0, 1), xlim = c(-3, 1))
+lines(log10(unlist(C)), mean_sensitivity, type = "b", frame = FALSE, pch = 19, 
+     col = "blue") 
+lines(log10(unlist(C)), mean_specificity, type = "b", frame = FALSE, pch = 19, 
+     col = "green")
+legend("bottomleft", legend = c("Accuracy", "Sensitivity", "Specificity"), 
+       col = c("red", "blue", "green"), lty = 1)
+
+```
+
+
+```{r}
+# Based on the results abvoe, the best C is 0.05:
+optimal_svm_model <- svm(outcome ~ ., data = upsampled_train, kernel = "linear", 
+                   type = 'C-classification', cost = 0.05, class.weights="inverse")
+optimal_svm_pred <- predict(optimal_svm_model, test_data_filtered)
+optimal_svm_cm <- print_metrics(test_outcome, optimal_svm_pred)
+```
+
+```{r}
+# Cross validation for Random Forrest
+repeat_cv <- trainControl(method='repeatedcv', number=5, repeats=3)
+forest <- train(outcome ~ ., 
+                data=upsampled_train, 
+                method='rf', 
+                trControl=repeat_cv)
+
+forest$finalModel
+```
+
+
+```{r}
+# The results of random forrest on train/validation
+optimal_rf_cm_train = forest$finalModel$confusion
+
+optimal_rf_cm_train
+# Print confusion matrix
+# Calculate accuracy
+accuracy <- sum(diag(optimal_rf_cm_train)) / sum(optimal_rf_cm_train)*100
+cat("Accuracy: ",  round(accuracy, 1), "%\n")
+
+# Calculate precision
+precision <- optimal_rf_cm_train[4] / 
+  (optimal_rf_cm_train[3] + optimal_rf_cm_train[4])*100
+cat("Precision: ",  round(precision, 1), "%\n")
+
+# Calculate sensitivity
+recall <- optimal_rf_cm_train[4] /
+  (optimal_rf_cm_train[2] + optimal_rf_cm_train[4])*100
+cat("Sensitivity: ",  round(recall, 1), "%\n")
+
+# Calculate specificity
+specificity <- optimal_rf_cm_train[1] / 
+  (optimal_rf_cm_train[2] + optimal_rf_cm_train[1])*100
+cat("Specificity: ",  round(specificity, 1), "%\n")
+```
+
+
+```{r}
+# using the optimal RF configuration on test dataset
+optimal_rf_pred <- predict(object=forest, newdata=test_data_filtered)
+optimal_rf_cm = print_metrics(test_outcome, optimal_rf_pred)
+```
+
+```{r}
+var_imp = data.frame(forest$finalModel$importance)
+var_imp_df <- data.frame(variable = row.names(var_imp), importance = var_imp[, 1])
+var_imp2 = as_tibble(var_imp_df[var_imp_df$importance>2,])
+## Create a plot of variable importance
+var_imp2 %>% arrange(importance) %>% 
+  ggplot(aes(x=reorder(variable, importance), y=importance)) + 
+  geom_bar(stat='identity') + 
+  coord_flip() + 
+  xlab('Variables') +
+  labs(title='Random forest variable importance') + 
+  theme_minimal() + 
+  theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 15), 
+        plot.title = element_text(size = 20))
+```
+
+
+```{r}
+# using the most important features of RF, to train SVM again
+var_imp_ind = data.frame(var_imp_df[var_imp_df$importance>1,])
+train_data_filtered_rf <- upsampled_train %>% dplyr::select(var_imp_ind$variable)
+test_data_filtered_rf <- test_data_filtered %>% dplyr::select(var_imp_ind$variable)
+train_data_filtered_rf$outcome = upsampled_train$outcome
+```
+
+
+```{r}
+# running the CV on the whole train dataset, and validating on test dataset
+folds <- createFolds(train_data_filtered_rf$outcome, k = 5)
+
+outcomecol = ncol(train_data_filtered_rf)
+mean_accuracy = list()
+mean_precision = list()
+mean_sensitivity = list()
+mean_specificity = list()
+
+C = list(0.01, 0.02, 0.03, 0.04, 0.05, 0.1)
+
+for (c in C) {
+  cat('c is', c)
+  acc = list()
+  prec = list()
+  sens = list()
+  spec = list()
+  for (k in 1:length(folds)) {
+    cv_svm_model <- svm(outcome ~ ., data = train_data_filtered_rf, kernel = "linear", 
+                   type = 'C-classification', cost = c, class.weights="inverse")
+    cv_svm_pred <- predict(cv_svm_model, test_data_filtered_rf)
+    cv_svm_cm <- table(test_outcome[1:length(cv_svm_pred)], cv_svm_pred)
+    accuracy <- sum(diag(cv_svm_cm)) / sum(cv_svm_cm)
+    precision <- cv_svm_cm[4] / (cv_svm_cm[3] + cv_svm_cm[4])
+    sensitivity <- cv_svm_cm[4] / (cv_svm_cm[2] + cv_svm_cm[4])
+    specificity <- cv_svm_cm[1] / (cv_svm_cm[3] + cv_svm_cm[1])
+    acc <- c(acc, accuracy)
+    prec <- c(prec, precision)
+    sens <- c(sens, sensitivity)
+    spec <- c(spec, specificity)
+  }
+  mean_accuracy <- c(mean_accuracy, mean(unlist(acc)))
+  mean_precision <- c(mean_precision, mean(unlist(prec)))
+  mean_sensitivity <- c(mean_sensitivity, mean(unlist(sens)))
+  mean_specificity <- c(mean_specificity, mean(unlist(spec)))
+}
+# plotting the SVM cross validation results
+print(mean_sensitivity)
+plot(log10(unlist(C)), mean_accuracy, type = "b", frame = FALSE, pch = 19, 
+     col = "red", xlab = "Log(C)", ylab="", ylim = c(0, 1), xlim = c(-2, -1))
+lines(log10(unlist(C)), mean_sensitivity, type = "b", frame = FALSE, pch = 19, 
+     col = "blue") 
+lines(log10(unlist(C)), mean_specificity, type = "b", frame = FALSE, pch = 19, 
+     col = "green")
+legend("bottomleft", legend = c("Accuracy", "Sensitivity", "Specificity"), 
+       col = c("red", "blue", "green"), lty = 1)
+
+```
+```{r}
+# Cross Validation for SVM on the new filtered dataset (rf important features) 
+
+C = list(0.001, 0.01, 0.1, 1, 10, 100)
+svm_cross_validation(train_data_filtered_rf, C, 5)
+```
+
+```{r}
+# Based on the results above, the best C is :
+optimal_rf_svm_model <- svm(outcome ~ ., data = train_data_filtered_rf, kernel = "linear", 
+                   type = 'C-classification', cost = 100, class.weights="inverse")
+optimal_rf_svm_pred <- predict(optimal_rf_svm_model, test_data_filtered_rf)
+optimal_rf_svm_cm <- print_metrics(test_outcome, optimal_rf_svm_pred)
+
+# But from domain knowledge, C = 100 is very high. So I put C = 0.03 as it performed
+# well on test set before:
+optimal_rf_svm_model2 <- svm(outcome ~ ., data = train_data_filtered_rf, kernel = "linear", 
+                   type = 'C-classification', cost = 0.03, class.weights="inverse")
+optimal_rf_svm_pred2 <- predict(optimal_rf_svm_model2, test_data_filtered_rf)
+optimal_rf_svm_cm2 <- print_metrics(test_outcome, optimal_rf_svm_pred2)
+```
+
+
+
+```{r}
+## Applying LDA model on the original data
+#(To see depending on variance, how different number of features affect the model)
+
+# Storing initial train_data under a different name
+model_data <- train_data
+
+# defining vector of feature subset sizes
+feature_sizes <- c(1000, 900, 800, 700, 600, 500, 400, 300, 200, 100)
+
+# initializing vectors to store performance metrics
+accuracy_values <- vector("numeric", length(feature_sizes))
+sensitivity_values <- vector("numeric", length(feature_sizes))
+specificity_values <- vector("numeric", length(feature_sizes))
+
+# performing 5-fold cross-validation
+folds <- createFolds(model_data$outcome, k = 5, list = TRUE, returnTrain = FALSE)
+
+# looping over feature subset sizes
+for (i in seq_along(feature_sizes)) {
+  size <- feature_sizes[i]
+  
+  # initializing vectors to store performance metrics for the current fold
+  fold_accuracy_values <- vector("numeric", length(folds))
+  fold_sensitivity_values <- vector("numeric", length(folds))
+  fold_specificity_values <- vector("numeric", length(folds))
+
+  # looping over the folds
+  for (j in seq_along(folds)) {
+    # sub-setting the dataframe with the current fold
+    model_data_subset <- model_data[-folds[[j]], ]
+    # computing variance for each feature
+    variances <- apply(model_data_subset, 2, var)
+    # sorting variances in decreasing order and selecting top features
+    top_features <- names(sort(variances, decreasing = TRUE)[1:size])
+    # sub-setting the dataframe with top features and response variable
+    model_data_subset <- model_data_subset[c(top_features, "outcome")]
+    
+    # fitting LDA model on current fold
+    lda_model <- lda(outcome ~ ., data = model_data_subset)
+    
+    # making predictions on current fold
+    test_preds_LDA <- predict(lda_model, newdata = model_data[folds[[j]], top_features])
+
+    # computing performance metrics for the current fold
+    cm <- confusionMatrix(table(model_data[folds[[j]], "outcome"], test_preds_LDA$class))
+    dimnames(cm$table) <- list("Actual Values" = c("0", "1"),
+                               "Predicted Values" = c("0", "1"))
+    accuracy <- sum(diag(cm$table)) / sum(cm$table)
+    sensitivity <- cm$table[2,2] / sum(cm$table[2,])
+    specificity <- cm$table[1,1] / sum(cm$table[1,])
+    
+    # storing performance metrics for the current fold
+    fold_accuracy_values[j] <- accuracy
+    fold_sensitivity_values[j] <- sensitivity
+    fold_specificity_values[j] <- specificity
+  }
+
+  # computing mean performance metrics across the folds
+  accuracy_values[i] <- mean(fold_accuracy_values)
+  sensitivity_values[i] <- mean(fold_sensitivity_values)
+  specificity_values[i] <- mean(fold_specificity_values)
+
+  # printing performance metrics
+  cat("Performance metrics for", size, "features (averaged across 5 folds):\n")
+  cat("Accuracy:", round(accuracy_values[i], 3), "\n")
+  cat("Sensitivity:", round(sensitivity_values[i], 3), "\n")
+  cat("Specificity:", round(specificity_values[i], 3), "\n\n")
+}
+# Storing the final results for plotting
+cat("Accuracy values:", paste(round(accuracy_values, 3), collapse = ", "), "\n")
+cat("Sensitivity values:", paste(round(sensitivity_values, 3), collapse = ", "), "\n")
+cat("Specificity values:", paste(round(specificity_values, 3), collapse = ", "), "\n")
+
+```
+
+
+```{r}
+# Plotting the model performance on the for the 5-fold cv
+X <- feature_sizes
+plot(X, accuracy_values, type = "b", pch = 19,
+     col = "red", xlab = "Number of features", ylim = c(0, 1), xlim = c(0, 1000), ylab=" ")
+lines(X, sensitivity_values, type = "b", pch = 19,
+     col = "blue")
+lines(X, specificity_values, type = "b", pch = 19,
+     col = "green")
+legend("bottom", legend = c("Accuracy", "Sensitivity", "Specificity"), col = c("red", "blue", "green"), lty = 1)
+```
+```{r}
+# Specifying the hold-out test data set
+holdtest_data <- test_data
+holdtest_data_outcome <- test_outcome
+
+accuracy_values_test <- vector("numeric", length(feature_sizes))
+sensitivity_values_test <- vector("numeric", length(feature_sizes))
+specificity_values_test <- vector("numeric", length(feature_sizes))
+
+# Using loop over feature subset sizes as before
+for (i in seq_along(feature_sizes)) {
+  size <- feature_sizes[i]
+  variances <- apply(model_data, 2, var)
+  top_features <- names(sort(variances, decreasing = TRUE)[1:size])
+  model_data_subset <- model_data[c(top_features, "outcome")]
+  
+  folds <- createFolds(model_data_subset$outcome, k = 5, returnTrain = TRUE)
+  accs <- c()
+  sens <- c()
+  specs <- c()
+  
+  for (j in seq_along(folds)) {
+    train_LDA <- model_data_subset[folds[[j]], ]
+    lda_model <- lda(outcome ~ ., data = train_LDA)
+    
+    # making predictions on hold-out test data
+    holdtest_preds_LDA <- predict(lda_model, newdata = holdtest_data)
+    
+    cm <- confusionMatrix(table(holdtest_data_outcome, holdtest_preds_LDA$class))
+    dimnames(cm$table) <- list("Actual Values" = c("0", "1"),
+                               " Predicted Values" = c("0", "1"))
+
+    accuracy_test <- sum(diag(cm$table)) / sum(cm$table)
+    sensitivity_test <- cm$table[2,2] / sum(cm$table[2,])
+    specificity_test <- cm$table[1,1] / sum(cm$table[1,])
+    accs <- c(accs, accuracy_test)
+    sens <- c(sens, sensitivity_test)
+    specs <- c(specs, specificity_test)
+
+  }
+  
+  # Computing average performance metrics over the 5 folds
+  accuracy_test <- mean(accs)
+  sensitivity_test <- mean(sens)
+  specificity_test <- mean(specs)
+  
+  # storing performance metrics for the cross-validation dataset
+  accuracy_values_test[i] <- accuracy_test
+  sensitivity_values_test[i] <- sensitivity_test
+  specificity_values_test[i] <- specificity_test
+  
+  # print average performance metrics over the 5 folds
+  cat("Average performance metrics for", size, "features (on hold-out test dataset):\n")
+  cat("Accuracy:", round(accuracy_test, 3), "\n")
+  cat("Sensitivity:", round(sensitivity_test, 3), "\n")
+  cat("Specificity:", round(specificity_test, 3), "\n\n")
+  
+}
+# Storing the final results for different feature sizes in the hold-out test dataset
+cat("Accuracy values (test):", paste(round(accuracy_values_test, 3), collapse = ", "), "\n")
+cat("Sensitivity values (test):", paste(round(sensitivity_values_test, 3), collapse = ", "), "\n")
+cat("Specificity values (test):", paste(round(specificity_values_test, 3), collapse = ", "), "\n")
+
+```
+
+
+```{r}
+# Plotting the performance for the hold-out test data
+plot(X, accuracy_values_test, type = "b", pch = 19,
+     col = "red", xlab = "Number of features", ylim = c(0, 1), xlim = c(0, 1000), ylab=" ")
+lines(X, sensitivity_values_test, type = "b", pch = 19,
+     col = "blue")
+lines(X, specificity_values_test, type = "b", pch = 19,
+     col = "green")
+legend("left", legend = c("Accuracy", "Sensitivity", "Specificity"), col = c("red", "blue", "green"), lty = 1)
+
+```
+
+```{r}
+# Trying to see how under-sampling the majority class may influence the LDA model
+# with the 100 most variable features (using only 100 features since the sample
+# size is reduced due to under-sampling)
+
+# creating indices for the minority class ('1') and majority class ('0')
+idx_train_1 <- which(train_df$outcome == 1)
+idx_train_0 <- which(train_df$outcome == 0)
+idx_test_1 <- which(test_df$outcome == 1)
+idx_test_0 <- which(test_df$outcome == 0)
+
+# randomly sampling '0' indices to match the number of '1' indices
+idx_train_0_undersampled <- sample(idx_train_0, length(idx_train_1))
+idx_test_0_undersampled <- sample(idx_test_0, length(idx_test_1))
+# combining the minority and undersampled majority class indices
+idx_train_undersampled <- c(idx_train_1, idx_train_0_undersampled)
+idx_test_undersampled <- c(idx_test_1, idx_test_0_undersampled)
+# creating the undersampled dataframe
+train_undersampled <- train_df[idx_train_undersampled, ]
+test_undersampled <- test_df[idx_test_undersampled, ]
+
+print("The train data before under-sampling:")
+table(train_df$outcome)
+
+print("The train data after under-sampling:")
+table(train_undersampled$outcome)
+
+print("The test data before under-sampling:")
+table(test_df$outcome)
+
+print("The test data after under-sampling:")
+table(test_undersampled$outcome)
+```
+```{r}
+train_data_undersampled = train_undersampled[,30:2311] # only the numerical mRNA features + the output as the last variable 
+test_data_undersampled = test_undersampled[,30:2310] # only the numerical mRNA features 
+test_outcome_undersampled = test_undersampled[,2311]
+
+# buidling the model with 100 features of the largest variance
+features <- 100
+folds <- createFolds(model_data_subset$outcome, k = 5, returnTrain = TRUE)
+variances <- apply(train_data_undersampled, 2, var)
+top_100_features <- names(sort(variances, decreasing = TRUE)[1:features])
+train_data_undersampled_subset <- train_data_undersampled[c(top_100_features, "outcome")]
+test_data_undersampled_subset <- test_data_undersampled[c(top_100_features)]
+lda_model_undersampled <- lda(outcome ~ ., data = train_data_undersampled_subset)
+undersampled_preds_LDA <- predict(lda_model_undersampled, newdata = test_data_undersampled_subset)
+  
+# computing performance metrics
+cm <- confusionMatrix(table(test_outcome_undersampled, undersampled_preds_LDA$class))
+dimnames(cm$table) <- list("Actual Values" = c("0", "1"),
+                           " Predicted Values" = c("0", "1"))
+
+accuracy_undersampled <- sum(diag(cm$table)) / sum(cm$table)
+sensitivity_undersampled <- cm$table[2,2] / sum(cm$table[2,])
+specificity_undersampled <- cm$table[1,1] / sum(cm$table[1,])
+
+cat("Confusion matrix for 100 features (in undersampled dataset):\n")
+print(cm$table)
+cat("\n")
+cat("Performance metrics for 100 features (in undersampled dataset):\n")
+cat("Accuracy in undersampled data:", round(accuracy_undersampled, 3), "\n")
+cat("Sensitivity in undersampled data:", round(sensitivity_undersampled, 3), "\n")
+cat("Specificity in undersampled data:", round(specificity_undersampled, 3), "\n\n")
+  
+```
+
+
+
+
+
